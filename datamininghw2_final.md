@@ -31,7 +31,7 @@ model is a better and more efficient estimator for pricing of houses.
 The inclusion of interaction variables in the lm\_large model were
 important in reducing the RMSE. The interaction between “Land Value” and
 “Lot Size” could be an important variable, as the size of the lot
-increases so will the value if the land. As well we included an
+increases so will the value of the land. As well we included an
 interaction for “Heating” and “Central Air” as they most likely are
 included packaged in most houses.
 
