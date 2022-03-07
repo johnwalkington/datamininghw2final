@@ -1,0 +1,413 @@
+---
+title: "datamininghw2"
+author: "John Walkington, Colin McNally, Karlo Vlahek"
+date: "3/6/2022"
+output: md_document
+---
+```{r setup, include=FALSE}
+setwd("~/Desktop/dataminingsp22/datamininghw2")
+hotels = read.csv("hotels_dev.csv")
+capmetro_UT = read.csv("capmetro_UT.csv", header = TRUE)
+german_credit = read.csv("german_credit.csv", header = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(modelr)
+library(rsample)
+library(mosaic)
+library(FNN)
+library(ggthemes)
+library(parallel)
+library(caret)
+library(ModelMetrics)
+library(foreach)
+set.seed(1234)
+```
+
+## Question 1
+
+### Observing Metro Passengers throughout various months and days
+
+```{r, include = FALSE}
+capmetro_UT$day_of_week = ordered(capmetro_UT$day_of_week, levels =c("Sun", "Mon", "Tue","Wed","Thu", "Fri","Sat"))
+capmetro_UT[order(capmetro_UT$day_of_week), ]
+weekdays_ = c(
+  `Sun` = "Sunday",
+  `Mon` = "Monday",
+  `Tue` = "Tuesday",
+  `Wed` = "Wednesday",
+  `Thu` = "Thursday",
+  `Fri` = "Friday",
+  `Sat` = "Saturday"
+)
+avg_boarding = capmetro_UT %>% 
+  group_by(hour_of_day, day_of_week, month) %>%
+  summarise(avgboarding = mean(boarding)) %>% 
+  arrange((day_of_week))
+avg_plot = ggplot(avg_boarding) +
+  geom_line(aes(y=avgboarding, x= hour_of_day, color=month), size =0.8, alpha = 0.9) +
+  facet_wrap(~day_of_week, labeller = as_labeller(weekdays_))+
+  labs(title = "2018 Capital Metro Daily Passenger Average",
+       y = "Average # of Passengers",
+       x = "Time (24-Hour Cycle)",
+       col = 'Month')+
+  scale_color_manual(labels= c("November", "October", "September"),
+                  values = c(Nov = 'red',
+                             Oct = 'green',
+                             Sep = 'blue')) +
+  theme(plot.caption = element_text(hjust = 0.5, face= "italic"),
+        plot.title = element_text(hjust=0.5), 
+        plot.subtitle =element_text(hjust=0.5))
+```
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+
+avg_plot
+```
+
+On weekdays, the peak number of average passengers board the metro around 3 PM to 5:30 PM. During the weekends, the magnitude of passengers is nowhere near that of weekdays, but traffic incrementally increases over time throughout the weekend. On average, Monday's were lower in September most likely due to holidays such as Labor Day. We could observe lower overall average passengers in November on Wednesdays, Thursdays, and Fridays,because of Thanksgiving holiday.In 2022 and onward, I anticipate average November passengers to be lower throughout the whole week as Thanksgiving break has been extended to a full week.
+
+### Metro Passengers vs. Temperature
+
+```{r include=FALSE}
+hours_ = c(
+  `6` = "6:00 AM",
+  `7` = "7:00 AM",
+  `8` = "8:00 AM",
+  `9` = "9:00 AM",
+  `10` = "10:00 AM",
+  `11` = "11:00 AM",
+  `12` = "12:00 PM",
+  `13` = "1:00 PM",
+  `14` = "2:00 PM",
+  `15` = "3:00 PM",
+  `16` = "4:00 PM",
+  `17` = "5:00 PM",
+  `18` = "6:00 PM",
+  `19` = "7:00 PM",
+  `20` = "8:00 PM",
+  `21` = "9:00 PM"
+)
+ temp_plot = ggplot(capmetro_UT) +
+  geom_point(aes(y = boarding, x = temperature, color = weekend), size =1, alpha = 0.6)+
+  facet_wrap(~hour_of_day,labeller = as_labeller(hours_)) +
+  theme_tufte() + theme(axis.line=element_line()) +
+  labs(title = 'Capital Metro Passengers and Temperature Throughout the Day',
+       x = 'Temperature (°F)',
+       y = 'Number of Passengers',
+       col = "",
+       caption ="When hour of day and weekend status are held constant, 
+       temperature doesn't have a noticeable effect in the number of UT 
+       passengers.") +
+  scale_color_manual(labels= c("Weekday","Weekend"),
+                     values = c(weekday = 'red',
+                                weekend = 'turquoise'))+
+  theme(plot.caption = element_text(hjust = 0.5, face= "bold.italic"),
+        plot.title = element_text(hjust=0.5), 
+        plot.subtitle =element_text(hjust=0.5))
+```
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+temp_plot
+```
+
+## Question 2
+
+```{r include=FALSE}
+data(SaratogaHouses)
+#Testing the RMSE values for the Medium Model and Our New Model to compare
+n=nrow(SaratogaHouses)
+
+rmse_vals = do(100)*{
+  # Splitting the Saratoga House Data
+  n_train = round(0.8*n)  # round to nearest integer
+  n_test = n - n_train
+  train_cases = sample.int(n, n_train, replace=FALSE)
+  test_cases = setdiff(1:n, train_cases)
+  lm_saratoga_train = SaratogaHouses[train_cases,]
+  lm_saratoga_test = SaratogaHouses[test_cases,]
+  
+  # Using the training 
+  lm_medium = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms
+                 + fireplaces + bathrooms + rooms + heating + fuel
+                 + centralAir, data=lm_saratoga_train)
+  
+  
+  lm_large= lm(price ~ lotSize + age + landValue + rooms + bathrooms
+               + heating + centralAir + rooms*bathrooms + landValue*lotSize
+               +heating*centralAir, data=lm_saratoga_train)
+  
+  
+  # predict on this testing set
+  yhat_test_medium = predict(lm_medium, lm_saratoga_test)
+  yhat_test_large = predict(lm_large, lm_saratoga_test)
+  
+  c(rmse_med=rmse(lm_saratoga_test$price,yhat_test_medium),
+    rmse_large=rmse(lm_saratoga_test$price, yhat_test_large))
+}
+```
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+colMeans(rmse_vals)
+```
+
+We can see that for the average RMSE the new Model named lm_large continuously
+beats out the lm_medium. We can then assume that the new model is a better and 
+more efficient estimator for pricing of houses. The inclusion of interaction
+variables in the lm_large model were important in reducing the RMSE. The
+interaction between "Land Value" and "Lot Size" could be an important variable,
+as the size of the lot increases so will the value if the land. As well we
+included an interaction for "Heating" and "Central Air" as they most likely are
+included packaged in most houses.
+
+```{r include = FALSE}
+#KNN Fit Regression to Prep for Bakeoff
+knn_saratoga_split= initial_split(SaratogaHouses, prop=0.8)
+knn_saratoga_train= training(knn_saratoga_split)
+knn_saratoga_test= testing(knn_saratoga_split)
+
+#Scaling the data for KNN
+knn_Xtrain=model.matrix(~bedrooms+bathrooms+fireplaces+centralAir+lotSize
+                        +landValue-1,data=knn_saratoga_train)
+knn_Xtest=model.matrix(~bedrooms+bathrooms+fireplaces+centralAir+lotSize
+                       +landValue-1,data=knn_saratoga_test)
+
+ytrain=knn_saratoga_train$price
+ytest=knn_saratoga_test$price
+
+scale_train=apply(knn_Xtrain,2,sd)
+Xtilde_train=scale(knn_Xtrain,scale=scale_train)
+Xtilde_test=scale(knn_Xtest,scale=scale_train)
+Xtilde_test=data.frame(Xtilde_test)%>%
+  mutate(price=c(ytest))
+Xtilde_train=data.frame(Xtilde_train)%>%
+  mutate(price=c(ytrain))
+
+#Finding the Correct K
+rmse_out_saratoga=foreach(i=1:100, .combine='c') %do% {
+  knn_model_saratoga= knnreg(price~bedrooms+bathrooms+fireplaces+centralAirYes
+                             +centralAirNo+lotSize+landValue,
+                             data=Xtilde_train, k=i)
+  modelr::rmse(knn_model_saratoga,Xtilde_test)
+}
+```
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+rmse_out_saratoga
+```
+
+After running the RMSE for different levels of K, we found that consistently one
+of the lowest estimators for Price given our KNN estimate is K=10. We will use
+K=10 as our value in the bakeoff against the the linear model.
+
+
+```{r include=FALSE}
+bakeoff_vals = do(100)*{
+  # Splitting the Saratoga House Data
+  bakeoff_saratoga_split= initial_split(SaratogaHouses, prop=0.8)
+  bakeoff_saratoga_train= training(bakeoff_saratoga_split)
+  bakeoff_saratoga_test= testing(bakeoff_saratoga_split)
+  
+  #Running the lm model for comparison to KNN
+  
+  lm_large_bakeoff= lm(price ~ lotSize + age + landValue + rooms + bathrooms 
+                       + heating+centralAir + rooms*bathrooms 
+                       + landValue*lotSize+heating*centralAir,
+                       data=bakeoff_saratoga_train)
+  
+  #Running the KNN Model to Compare to lm
+  bakeoff_Xtrain=model.matrix(~bedrooms+bathrooms+fireplaces+centralAir+lotSize
+                          +landValue-1,data=bakeoff_saratoga_train)
+  bakeoff_Xtest=model.matrix(~bedrooms+bathrooms+fireplaces+centralAir+lotSize
+                         +landValue-1,data=bakeoff_saratoga_test)
+  
+  bakeoff_ytrain=bakeoff_saratoga_train$price
+  bakeoff_ytest=bakeoff_saratoga_test$price
+  
+  scale_train=apply(bakeoff_Xtrain,2,sd)
+  bakeoff_Xtilde_train=scale(bakeoff_Xtrain,scale=scale_train)
+  bakeoff_Xtilde_test=scale(bakeoff_Xtest,scale=scale_train)
+  bakeoff_Xtilde_test=data.frame(bakeoff_Xtilde_test)%>%
+    mutate(price=c(bakeoff_ytest))
+  bakeoff_Xtilde_train=data.frame(bakeoff_Xtilde_train)%>%
+    mutate(price=c(bakeoff_ytrain))
+  bakeoff_model_saratoga= knnreg(price~bedrooms+bathrooms+fireplaces
+                                 +centralAirYes+centralAirNo+lotSize+landValue,
+                                 data=bakeoff_Xtilde_train, k=10)
+  # predict on this testing set
+  yhat_test_large = predict(lm_large, lm_saratoga_test)
+  
+  c(rmse_knn=modelr::rmse(bakeoff_model_saratoga,bakeoff_Xtilde_test),
+    rmse_large=rmse(lm_saratoga_test$price, yhat_test_large))
+}
+```
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+colMeans(bakeoff_vals)
+```
+
+We see that iterated over 100 trials the lm_large has a consistently lower
+RMSE compared to the KNN model. This lets us know that for the pricing of these 
+of houses our lm_large is a better estimator than our scaled KNN estimator.
+
+## Question 3
+
+### Default Probability Bar Plot
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+default_data = addmargins(table(german_credit$Default, german_credit$history))
+prob_good=default_data[2,1]/default_data[3,1]
+prob_poor=default_data[2,2]/default_data[3,2]
+prob_terrible=default_data[2,3]/default_data[3,3]
+df_credit = data.frame(prob = c(prob_good,prob_poor,prob_terrible),
+                       history = c("Good", "Poor", "Terrible"))
+                       
+                      
+ggplot(df_credit)+
+  geom_col(aes(x = history, y = prob, fill = history)) +
+  scale_y_continuous(labels=scales::percent) +
+  labs(title = "Probability of Default on Loans given Credit History",
+       y = "Default Probabilities",
+       x = "Credit History Classification" ) +
+  theme_clean() +
+  scale_fill_discrete() +
+  theme(legend.position = "none")
+```
+
+### GLM Output (Transformed and Exponentiated Values):
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+bigmodel = glm(Default ~ duration + amount + installment + age + history + 
+                 purpose + foreign, data = german_credit, family = binomial)
+
+odds = coef(bigmodel) %>% lapply(exp) %>% data.frame()
+odds
+```
+
+The "odds" table contains the transformed, exponentiated betas produced by the logistic regression, which can be interpreted as multipliers to the odds ratio.  For example, we find that having "poor" credit history compared to "good" multiplies the odds of default by 0.33--the odds of default are reduced by two-thirds.  This does not seem right according to the intuition that someone with poor credit should have HIGHER odds of default. This foreshadows the problem with the retrospective sampling in this instance. The bank including loans that were defaulted is creating an inherent bias in the sampling of data (i.e. - random sampling seems to not have been the form of data collection). Therefore, the data  set is not appropriate for building a predictive model of defaults. Recommendations for better sampling is to incorporate simple random sampling or clustering methods to prevent bias and any endogeneity issues.
+
+## Question 4
+
+```{r, include = FALSE}
+
+hotels = read.csv("hotels_dev.csv")
+
+hotels_split = initial_split(hotels, prop = 0.8)
+hotels_train = training(hotels_split)
+hotels_test = testing(hotels_split)
+```
+
+Model building:
+In order to predict whether or not a child will be present for a given hotel booking given other characteristics of that reservation, we build three linear probability models with a variable probability threshold that predicts 1 (child present) or 0 (child not present) if the predicted probabilities exceed that threshold.  We construct a confusion matrix that calculates the TPR (true positive rate) for each model as a singular (but not comprehensive) measure of out-of-sample performance.
+
+The first model, "baseline1" incorporates market_segment, adults, customer_type, and is_repeated_guest variables as features.  We use a baseline probability threshold of p = 0.15:
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+baseline1 = lm(children ~ market_segment + adults + customer_type + is_repeated_guest,
+            data = hotels_train)
+
+probhat_test = predict(baseline1, newdata=hotels_test)
+yhat_test = ifelse(probhat_test >= 0.15, 1, 0)
+confusion_test1 = table(y=hotels_test$children, yhat=yhat_test)
+tpr_test1 = confusion_test1[4]/(confusion_test1[2]+confusion_test1[4])
+error_rate = (confusion_test1[2]+confusion_test1[3])/(confusion_test1[1]+confusion_test1[2]+confusion_test1[3]+confusion_test1[4])
+accuracy_rate = 1 - error_rate
+tpr_test1
+```
+
+We get a TPR of 0.022, which is abysmal, but this figure improves with our next model "baseline2", which incorporates all the variables except for arrival_date:
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+baseline2 = lm(children ~ . - arrival_date, data = hotels_train)
+
+probhat_test = predict(baseline2, newdata=hotels_test)
+yhat_test = ifelse(probhat_test >= 0.15, 1, 0)
+confusion_test2 = table(y=hotels_test$children, yhat=yhat_test)
+tpr_test2 = confusion_test2[4]/(confusion_test2[2]+confusion_test2[4])
+error_rate = (confusion_test2[2]+confusion_test2[3])/(confusion_test2[1]+confusion_test2[2]+confusion_test2[3]+confusion_test2[4])
+accuracy_rate = 1 - error_rate
+tpr_test2
+```
+
+With this model, holding everything else constant and only changing the feature set we incorporate, we get a TPR of 0.582, which is decidedly better than the first model.
+
+The third model is the one we built ourselves by starting with "baseline2" and adding the interaction between average_daily_rate and adults:
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+baseline3 = lm(children ~ . - arrival_date + average_daily_rate*adults, data = hotels_train)
+
+probhat_test = predict(baseline3, newdata=hotels_test)
+yhat_test = ifelse(probhat_test >= 0.15, 1, 0)
+confusion_test3 = table(y=hotels_test$children, yhat=yhat_test)
+tpr_test3 = confusion_test3[4]/(confusion_test3[2]+confusion_test3[4])
+error_rate = (confusion_test3[2]+confusion_test3[3])/(confusion_test3[1]+confusion_test3[2]+confusion_test3[3]+confusion_test3[4])
+accuracy_rate = 1 - error_rate
+tpr_test3
+```
+
+This model gives us a TPR of 0.586, which is an improvement of about .004 compared to the second model. Technically, this is better model performance according to the singular metric of TPR at the given threshold of p = 0.15.  This is not necessarily a good measure to use by itself, as the overall accuracy rate of this model is slightly lower than the first.  But for the purposes of this question we'll consider this a step up from the previous model.
+
+Model validation:
+Now we'll load in hotels_val.csv, which is data that this model has not seen previously.
+We'll use the model "baseline3," and produce a ROC curve that plots the TPR and FPR for every value of the probabilty threshold.
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+hotels_val = read.csv("hotels_val.csv")
+
+tprlist = c()
+fprlist = c()
+thresholdlist = c()
+interval = seq(0,1,0.01)
+for (i in interval) {
+  threshold = i
+  probhat_test = predict(baseline3, newdata=hotels_val)
+  yhat_test = ifelse(probhat_test >= threshold, 1, 0)
+  confusion_test4 = table(y=hotels_val$children, yhat=yhat_test)
+  tpr_test4 = confusion_test4[4]/(confusion_test4[2]+confusion_test4[4])
+  fpr_test4 = confusion_test4[3]/(confusion_test4[1]+confusion_test4[3])
+  tprlist = c(tprlist, tpr_test4)
+  fprlist = c(fprlist, fpr_test4)
+  thresholdlist = c(thresholdlist, i)
+}
+
+roccurve = data.frame(cbind(thresholdlist, tprlist, fprlist))
+ggplot(data = roccurve, mapping = aes(x = fprlist, y = tprlist)) + 
+  geom_line() +
+  labs(title = "ROC curve") +
+  xlab("FPR") +
+  ylab("TPR")
+```
+
+Peak classification performance happens at the furthest northwest corner of this curve, which occurs in the neighborhood of threshold values between p = 0.10 and p = 0.15 (so our starting baseline of p = 0.15 was a pretty good guess!)
+
+```{r echo=FALSE, error=FALSE, message=FALSE, warning =FALSE}
+# allocate to folds
+N = nrow(hotels_val)
+K = 20
+fold_id = rep_len(1:K, N)  # repeats 1:K over and over again
+fold_id = sample(fold_id, replace=FALSE) # permute the order randomly
+
+hotels_val_fold = cbind(hotels_val, fold_id)
+
+children_hats = c()
+children_trues = c()
+instance = seq(1:20)
+
+for(i in 1:K) {
+hotels_val_fold_only = hotels_val_fold %>% 
+  filter(fold_id == i)
+predictions = predict(baseline3, newdata = hotels_val_fold_only)
+children_hat = sum(predictions)
+children_hats = c(children_hats, children_hat)
+children_true = sum(hotels_val_fold_only$children)
+children_trues = c(children_trues, children_true)
+}
+
+error_sq = (children_trues - children_hats)^2
+rmse = sqrt(sum(error_sq)/20)
+fold_performance = data.frame(cbind(instance, children_hats, children_trues))
+
+ggplot(fold_performance, aes(x = instance)) +
+  geom_col(aes(y = children_hats), color = "blue", alpha = 0.8) +
+  geom_col(aes(y = children_trues), color = "red", alpha = 0.8)
+
+rmse
+```
+This plot shows the predicted number of children per fold in blue, and the true number of children per fold in red.  Depending on the random split, the RMSE is somewhere between 3 and 4, which means our estimate is pretty accurate.
